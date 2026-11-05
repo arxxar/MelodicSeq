@@ -22,7 +22,7 @@
   const deleteBtn = document.getElementById('btn-delete');
   const startBtn = document.getElementById('btn-start-note');
 
-  const state = { nodes: [], vectors: [], selected: null, startId: null, playingId: null, nextId: 1 };
+  const state = { nodes: [], vectors: [], selected: null, startId: null, playingId: null, lastNoteId: null, nextId: 1 };
   let interaction = null;
 
   function noteName(midi) {
@@ -30,7 +30,13 @@
   }
 
   function nodeRadius(n) {
-    return n.type === 'note' ? NOTE_R : ROUTE_R;
+    if (n.type !== 'note') return ROUTE_R;
+    // Diameter 100% = probability 100%, diameter 50% = probability 0%
+    return NOTE_R * (0.5 + 0.5 * prob(n) / 100);
+  }
+
+  function prob(n) {
+    return n.prob === undefined ? 100 : n.prob;
   }
 
   function setStatus(msg) {
@@ -80,8 +86,24 @@
     }
     const node = { id: state.nextId++, type, x: pos[0], y: pos[1], midi: midi };
     state.nodes.push(node);
+    let linked = false;
+    if (type === 'note') {
+      const isFirst = !state.nodes.some((n) => n.type === 'note' && n !== node);
+      if (isFirst) state.startId = node.id;
+      // Default vectors to and from the active note (the selected note; falls back to the last added one)
+      const sel = state.selected && state.selected.kind === 'node' ? nodeById(state.selected.id) : null;
+      const activeId = sel && sel.type === 'note' ? sel.id : state.lastNoteId;
+      if (activeId !== null && activeId !== node.id && nodeById(activeId)) {
+        state.vectors.push({ id: state.nextId++, from: activeId, to: node.id });
+        state.vectors.push({ id: state.nextId++, from: node.id, to: activeId });
+        linked = true;
+      }
+      state.lastNoteId = node.id;
+    }
     select({ kind: 'node', id: node.id });
-    setStatus(type === 'note' ? 'Added note ' + noteName(midi) + '.' : 'Added routing circle.');
+    setStatus(type === 'note'
+      ? 'Added note ' + noteName(midi) + (linked ? ' with vectors to and from the active note.' : '.') + (state.startId === node.id ? ' It is the start note.' : '')
+      : 'Added routing circle.');
     return node;
   }
 
@@ -123,6 +145,7 @@
     state.vectors = [];
     state.selected = null;
     state.startId = null;
+    state.lastNoteId = null;
     setStatus('Pattern cleared.');
     render();
   }
@@ -200,7 +223,18 @@
     startBtn.disabled = !canStart;
     startBtn.textContent = canStart && state.startId === sel.id ? '★ Unset start' : '★ Set as start';
     startBtn.title = canStart ? '' : 'Select a note first';
+    probInput.disabled = !canStart;
+    if (canStart && document.activeElement !== probInput) probInput.value = prob(sel);
+    if (!canStart) probInput.value = '';
   }
+
+  const probInput = document.getElementById('prob');
+  probInput.addEventListener('input', () => {
+    const sel = state.selected && state.selected.kind === 'node' ? nodeById(state.selected.id) : null;
+    if (!sel || sel.type !== 'note' || probInput.value === '') return;
+    sel.prob = clamp(Math.round(Number(probInput.value)), 0, 100);
+    render();
+  });
 
   function svgPoint(evt) {
     const pt = svg.createSVGPoint();
@@ -442,15 +476,24 @@
   }
 
   // ---- Playback ----
-  const VELOCITY = 100;
-  const GATE = 0.9;
-  const LOOKAHEAD_MS = 30;
+  const velocityInput = document.getElementById('velocity');
+  const gateInput = document.getElementById('gate');
+
+  function velocity() {
+    return Math.min(127, Math.max(1, Math.round(Number(velocityInput.value)) || 127));
+  }
+
+  function gate() {
+    return Math.min(100, Math.max(10, Number(gateInput.value) || 90)) / 100;
+  }
+  const TICK_MS = 20;
+  const AHEAD_MS = 100;
   const startPlayBtn = document.getElementById('btn-start');
   const pausePlayBtn = document.getElementById('btn-pause');
   const stopPlayBtn = document.getElementById('btn-stop');
   const bpmInput = document.getElementById('bpm');
   const timingSel = document.getElementById('timing');
-  const playback = { running: false, current: null, nextTime: 0, timer: null, sounding: null };
+  const playback = { running: false, current: null, nextTime: 0 };
 
   function stepMs() {
     const bpm = Math.min(300, Math.max(20, Number(bpmInput.value) || 120));
@@ -462,16 +505,18 @@
     return Number(midiOutChannelSel.value) - 1;
   }
 
-  function sendNote(on, midi, when) {
+  const sounding = new Set();
+
+  function sendNote(on, midi) {
+    if (on) sounding.add(midi);
+    else sounding.delete(midi);
     if (!activeOutput) return;
-    activeOutput.send([(on ? 0x90 : 0x80) | outChannel(), midi, on ? VELOCITY : 0], when);
+    activeOutput.send([(on ? 0x90 : 0x80) | outChannel(), midi, on ? velocity() : 0]);
   }
 
   function silence() {
-    if (!activeOutput) return;
-    if (playback.sounding !== null) sendNote(false, playback.sounding);
-    activeOutput.send([0xb0 | outChannel(), 123, 0]); // all notes off
-    playback.sounding = null;
+    for (const m of [...sounding]) sendNote(false, m);
+    if (activeOutput) activeOutput.send([0xb0 | outChannel(), 123, 0]); // all notes off
   }
 
   // Every path from a note along outgoing vectors, through routing circles, to the next note circle
@@ -518,12 +563,46 @@
   }
 
   function setPlaying(id) {
+    if (state.playingId === id) return;
     state.playingId = id;
-    render();
+    if (!document.hidden) render();
   }
 
-  function step() {
-    playback.timer = null;
+  // Timer in a Web Worker: not throttled when the tab is in the background (setTimeout is, to ~1 s)
+  let tickWorker = null;
+  function startTicker() {
+    if (!tickWorker) {
+      const src = 'let t=null;onmessage=e=>{clearInterval(t);if(e.data)t=setInterval(()=>postMessage(0),e.data)}';
+      tickWorker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+      tickWorker.onmessage = tick;
+    }
+    tickWorker.postMessage(TICK_MS);
+  }
+  function stopTicker() {
+    if (tickWorker) tickWorker.postMessage(0);
+  }
+
+  // Events (highlight / end of sequence) that have to happen at a scheduled time
+  let events = [];
+
+  function tick() {
+    if (!playback.running) return;
+    const now = performance.now();
+    while (playback.running && playback.nextTime < now + AHEAD_MS) scheduleStep();
+    while (events.length && events[0].time <= now) {
+      const ev = events.shift();
+      if (ev.end) {
+        stopPlayback(true);
+        setStatus('Sequence ended: ' + ev.end + ' has no outgoing path.');
+        return;
+      }
+      if (!ev.silent) sendNote(ev.on, ev.midi);
+      if (ev.on) setPlaying(ev.id);
+    }
+  }
+
+  // Creates the next events (note on/off, highlight) a little ahead of time
+  function scheduleStep() {
     const node = playback.current !== null ? nodeById(playback.current) : null;
     if (!node) {
       stopPlayback(true);
@@ -531,22 +610,23 @@
       return;
     }
     const dur = stepMs();
-    sendNote(true, node.midi, playback.nextTime);
-    sendNote(false, node.midi, playback.nextTime + dur * GATE);
-    playback.sounding = node.midi;
-    setPlaying(node.id);
+    const t = playback.nextTime;
+    // MIDI is sent when due (not with a future timestamp): drivers may ignore timestamps
+    // A note that is not drawn by its probability becomes a rest; the walk continues
+    const silent = Math.random() * 100 >= prob(node);
+    events.push({ time: t, id: node.id, midi: node.midi, on: true, silent });
+    events.push({ time: t + dur * gate(), midi: node.midi, on: false, silent });
 
     const next = pickNext(node.id);
-    if (next === null) {
-      playback.timer = setTimeout(() => {
-        stopPlayback(true);
-        setStatus('Sequence ended: ' + noteName(node.midi) + ' has no outgoing path.');
-      }, Math.max(0, playback.nextTime + dur - performance.now()));
-      return;
-    }
-    playback.current = next;
     playback.nextTime += dur;
-    playback.timer = setTimeout(step, Math.max(0, playback.nextTime - performance.now() - LOOKAHEAD_MS));
+    if (next === null) {
+      events.push({ time: playback.nextTime, end: noteName(node.midi) });
+      playback.current = null;
+      playback.nextTime = Infinity;
+    } else {
+      playback.current = next;
+    }
+    events.sort((a, b) => a.time - b.time);
   }
 
   function startPlayback() {
@@ -561,30 +641,38 @@
     if (!activeOutput) setStatus('Playing without MIDI output – choose “MIDI out” at the bottom.');
     else setStatus('Playing.');
     playback.running = true;
-    playback.nextTime = performance.now() + LOOKAHEAD_MS;
+    playback.nextTime = performance.now() + 30;
+    events = [];
     updateTransport();
-    step();
+    startTicker();
+    tick();
+  }
+
+  function haltPlayback() {
+    playback.running = false;
+    stopTicker();
+    events = [];
+    silence();
   }
 
   function pausePlayback() {
     if (!playback.running) return;
-    clearTimeout(playback.timer);
-    playback.running = false;
-    silence();
+    haltPlayback();
     updateTransport();
     setStatus('Paused.');
   }
 
   function stopPlayback(quiet) {
-    clearTimeout(playback.timer);
-    playback.running = false;
+    haltPlayback();
     playback.current = null;
-    silence();
     updateTransport();
     if (state.playingId !== null) setPlaying(null);
     if (!quiet) setStatus('Stopped.');
   }
 
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) render();
+  });
   startPlayBtn.addEventListener('click', startPlayback);
   pausePlayBtn.addEventListener('click', pausePlayback);
   stopPlayBtn.addEventListener('click', () => stopPlayback(false));

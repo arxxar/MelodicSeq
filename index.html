@@ -23,6 +23,10 @@
         <option value="1/16" selected>1/16</option>
         <option value="1/32">1/32</option>
       </select>
+      <label for="velocity">Velocity</label>
+      <input id="velocity" type="number" min="1" max="127" step="1" value="127">
+      <label for="gate">Length %</label>
+      <input id="gate" type="number" min="10" max="100" step="5" value="90">
     </div>
     <div class="group">
       <label for="pitch">Pitch</label>
@@ -31,6 +35,8 @@
       <button id="btn-add-route" type="button">+ Routing circle</button>
     </div>
     <div class="group">
+      <label for="prob">Probability %</label>
+      <input id="prob" type="number" min="0" max="100" step="5" disabled title="Select a note first">
       <button id="btn-delete" type="button" disabled>Delete selected</button>
       <button id="btn-start-note" type="button" disabled title="Select a note first">★ Set as start</button>
       <button id="btn-clear" type="button">Clear</button>
@@ -57,18 +63,20 @@
     <h2>How to use</h2>
     <ul>
       <li><strong>Add note:</strong> choose a pitch and click “Add note”, or press a piano key on the computer keyboard
-        (<kbd>A W S E D F T G Y H U J K</kbd> = C3 … C4). Notes land at a random free spot.</li>
+        (<kbd>A W S E D F T G Y H U J K</kbd> = C3 … C4). Notes land at a random free spot. The first note becomes the start note.
+        Every further note is connected to the active (selected) note by two vectors, one each way, and then becomes the active note.</li>
       <li><strong>MIDI keyboard:</strong> pick your controller under “MIDI in” (bottom bar) and a channel (Omni = all). Each incoming note-on adds that note. Edge asks for MIDI permission on first use.</li>
       <li><strong>Playback:</strong> choose “MIDI out” (e.g. a loopMIDI/Windows MIDI port that Ableton listens to), set a start note and press Start.
         From the current note the next one is picked among all paths following its outgoing vectors (through routing circles until the next note).
         Shorter paths are more likely (weight = 1 / path length). Pause keeps the position, Stop resets it. A note without any outgoing path ends the sequence.</li>
+      <li><strong>Probability:</strong> select a note and set “Probability %” in the toolbar. The circle's diameter shows it: 100 % = full size (default), 0 % = half size. When the walk reaches a note, it sounds with that probability; otherwise that step is a rest and the walk continues.</li>
       <li><strong>Move:</strong> drag a circle.</li>
       <li><strong>Draw a vector:</strong> drag from the outer ring of a circle onto another circle.</li>
       <li><strong>Routing circle:</strong> click “Routing circle” or double-click an empty spot.</li>
       <li><strong>Select / delete:</strong> click a circle or vector, then press <kbd>Delete</kbd>.</li>
       <li><strong>Start note:</strong> select a note and click “Set as start” (click again to unset). Only one note can be the start; it is shown in gold with a star.</li>
     </ul>
-    <p>Prototype: fixed note length (90% of a step) and velocity 100; detailed timing model still to be defined.</p>
+    <p>Prototype: velocity and note length are global settings in the toolbar; detailed timing model still to be defined.</p>
   </footer>
 
   <footer class="midi-bar" role="region" aria-label="MIDI configuration">

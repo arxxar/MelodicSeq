@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MelodicSeq – UI prototype</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="toolbar" role="toolbar" aria-label="Sequencer controls">
+    <div class="group" aria-label="Transport">
+      <button id="btn-start" type="button">▶ Start</button>
+      <button id="btn-pause" type="button" disabled>⏸ Pause</button>
+      <button id="btn-stop" type="button" disabled>⏹ Stop</button>
+    </div>
+    <div class="group">
+      <label for="bpm">BPM</label>
+      <input id="bpm" type="number" min="20" max="300" step="1" value="120">
+      <label for="timing">Timing</label>
+      <select id="timing">
+        <option value="1/4">1/4</option>
+        <option value="1/8">1/8</option>
+        <option value="1/16" selected>1/16</option>
+        <option value="1/32">1/32</option>
+      </select>
+    </div>
+    <div class="group">
+      <label for="pitch">Pitch</label>
+      <select id="pitch"></select>
+      <button id="btn-add-note" type="button">+ Add note</button>
+      <button id="btn-add-route" type="button">+ Routing circle</button>
+    </div>
+    <div class="group">
+      <button id="btn-delete" type="button" disabled>Delete selected</button>
+      <button id="btn-start-note" type="button" disabled title="Select a note first">★ Set as start</button>
+      <button id="btn-clear" type="button">Clear</button>
+    </div>
+  </header>
+
+  <main>
+    <svg id="pattern" viewBox="0 0 1000 600" role="application"
+         aria-label="Pattern area. Contains note circles, routing circles and vectors.">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="context-stroke"></path>
+        </marker>
+      </defs>
+      <rect id="bg" x="0" y="0" width="1000" height="600"></rect>
+      <g id="layer-vectors"></g>
+      <g id="layer-temp"></g>
+      <g id="layer-nodes"></g>
+    </svg>
+    <p id="status" role="status" aria-live="polite">Pattern area is empty. Add a note to begin.</p>
+  </main>
+
+  <footer class="help">
+    <h2>How to use</h2>
+    <ul>
+      <li><strong>Add note:</strong> choose a pitch and click “Add note”, or press a piano key on the computer keyboard
+        (<kbd>A W S E D F T G Y H U J K</kbd> = C3 … C4). Notes land at a random free spot.</li>
+      <li><strong>MIDI keyboard:</strong> pick your controller under “MIDI in” (bottom bar) and a channel (Omni = all). Each incoming note-on adds that note. Edge asks for MIDI permission on first use.</li>
+      <li><strong>Playback:</strong> choose “MIDI out” (e.g. a loopMIDI/Windows MIDI port that Ableton listens to), set a start note and press Start.
+        From the current note the next one is picked among all paths following its outgoing vectors (through routing circles until the next note).
+        Shorter paths are more likely (weight = 1 / path length). Pause keeps the position, Stop resets it. A note without any outgoing path ends the sequence.</li>
+      <li><strong>Move:</strong> drag a circle.</li>
+      <li><strong>Draw a vector:</strong> drag from the outer ring of a circle onto another circle.</li>
+      <li><strong>Routing circle:</strong> click “Routing circle” or double-click an empty spot.</li>
+      <li><strong>Select / delete:</strong> click a circle or vector, then press <kbd>Delete</kbd>.</li>
+      <li><strong>Start note:</strong> select a note and click “Set as start” (click again to unset). Only one note can be the start; it is shown in gold with a star.</li>
+    </ul>
+    <p>Prototype: fixed note length (90% of a step) and velocity 100; detailed timing model still to be defined.</p>
+  </footer>
+
+  <footer class="midi-bar" role="region" aria-label="MIDI configuration">
+    <div class="group">
+      <strong>MIDI in</strong>
+      <select id="midi-input" aria-label="MIDI input device"><option value="">(not connected)</option></select>
+      <label for="midi-channel">Channel</label>
+      <select id="midi-channel"></select>
+    </div>
+    <div class="group">
+      <strong>MIDI out</strong>
+      <select id="midi-output" aria-label="MIDI output device"><option value="">(none)</option></select>
+      <label for="midi-out-channel">Channel</label>
+      <select id="midi-out-channel"></select>
+    </div>
+    <span id="midi-status" class="midi-status" title="MIDI status">MIDI: –</span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
